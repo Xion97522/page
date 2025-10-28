@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Swimming Orangutan</title>
+<style>
+html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#02384a; }
+#score { position:absolute; top:10px; left:10px; font-size:18px; font-weight:bold; color:#ffe27a; z-index:11; display:none; }
+#gameOver { display:none; flex-direction:column; gap:12px; align-items:center; background:rgba(255,255,255,0.95); padding:20px; border-radius:14px; color:#042b3a; font-weight:bold; z-index:12; position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); }
+#gameOver button { padding:8px 14px; border:none; border-radius:10px; cursor:pointer; font-weight:bold; }
+#retryBtn { background:linear-gradient(90deg,#ffb97b,#ff8a3d); color:#042b3a; }
+#backLobbyBtn { background:rgba(255,255,255,0.06); color:#042b3a; }
+#logo { position:absolute; top:30px; left:50%; transform:translateX(-50%); font-size:36px; font-weight:bold; color:#ffe27a; text-shadow:2px 2px 4px #000; z-index:10; }
+</style>
+</head>
+<body>
+<div id="logo">Swimming Orangutan</div>
+<div id="score">Score: 0</div>
+<div id="gameOver">
+  <div id="finalScore">Score: 0</div>
+  <div>
+    <button id="retryBtn">Retry</button>
+    <button id="backLobbyBtn">Back to Lobby</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.163.0/examples/js/loaders/GLTFLoader.js"></script>
+
+<script>
+// ---------------- Audio ----------------
+let lobbyAudio = new Audio('lobby.mp3'); lobbyAudio.loop = true; lobbyAudio.volume = 0.9;
+let gameplayAudio = new Audio('gameplay.mp3'); gameplayAudio.loop = true; gameplayAudio.volume = 0.95;
+let jumpAudio = new Audio('jump.mp3');
+let bananaAudio = new Audio('banana.mp3');
+let deathAudio = new Audio('death.mp3');
+
+// ---------------- Three.js Setup ----------------
+let scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x02384a, 10, 200);
+let camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 500);
+camera.position.set(0,5,10);
+let renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Lights
+let hemi = new THREE.HemisphereLight(0xffffff,0x444444,1.0); hemi.position.set(0,20,0); scene.add(hemi);
+let dir = new THREE.DirectionalLight(0xffffff,0.8); dir.position.set(-5,10,5); scene.add(dir);
+
+// Floor
+let floorGeo = new THREE.PlaneGeometry(200,200);
+let floorMat = new THREE.MeshStandardMaterial({color:0xd9b78d});
+let floor = new THREE.Mesh(floorGeo,floorMat); floor.rotation.x=-Math.PI/2; floor.position.y=-1; scene.add(floor);
+
+// ---------------- Load Orangutan GLB ----------------
+let loader = new THREE.GLTFLoader();
+let orangutan, mixer;
+loader.load('orangutan.glb', function(gltf){
+    orangutan = gltf.scene;
+    orangutan.traverse(c=>{ if(c.isMesh) c.material.color.set(0xff8a3d); });
+    orangutan.scale.set(0.8,0.8,0.8);
+    orangutan.position.set(0,0,0);
+    scene.add(orangutan);
+    if(gltf.animations.length>0){ mixer = new THREE.AnimationMixer(orangutan); mixer.clipAction(gltf.animations[0]).play(); }
+}, undefined, function(e){ console.error(e); });
+
+// ---------------- Obstacles & Bananas ----------------
+let obstacles = [], bananas = [];
+function spawnObstacle(){
+    let type = Math.random();
+    if(type<0.6){
+        let geo=new THREE.BoxGeometry(1+Math.random()*1,1+Math.random()*2,1);
+        let mat=new THREE.MeshStandardMaterial({color:0x6d4b3a});
+        let mesh=new THREE.Mesh(geo,mat); mesh.position.set(10,geo.parameters.height/2-1,0);
+        scene.add(mesh); obstacles.push(mesh);
+    } else {
+        let geo=new THREE.SphereGeometry(0.5+Math.random()*0.5,16,16);
+        let mat=new THREE.MeshStandardMaterial({color:0xffe27a, emissive:0xffffaa, emissiveIntensity:0.5});
+        let mesh=new THREE.Mesh(geo,mat); mesh.position.set(10,1+Math.random()*3,0); scene.add(mesh); bananas.push(mesh);
+    }
+}
+
+// ---------------- Player ----------------
+let player = {x:0,y:0,v:0,glide:false};
+let score=0;
+let running=false;
+
+// ---------------- Input ----------------
+let pointerDown=false;
+window.addEventListener('pointerdown',()=>{ pointerDown=true; if(!running) startGame(); player.v=-0.2; player.glide=false; jumpAudio.currentTime=0; jumpAudio.play(); });
+window.addEventListener('pointerup',()=>{ pointerDown=false; player.glide=true; });
+
+// ---------------- Game Over ----------------
+let gameOverEl = document.getElementById('gameOver');
+function handleDeath(){
+    running=false;
+    gameplayAudio.pause();
+    deathAudio.currentTime=0; deathAudio.play();
+    gameOverEl.style.display='flex';
+    document.getElementById('finalScore').textContent='Score: '+Math.floor(score);
+}
+document.getElementById('retryBtn').addEventListener('click',()=>location.reload());
+document.getElementById('backLobbyBtn').addEventListener('click',()=>location.reload());
+
+// ---------------- Start Game ----------------
+function startGame(){
+    running=true;
+    document.getElementById('logo').style.display='none';
+    document.getElementById('score').style.display='block';
+    lobbyAudio.pause();
+    gameplayAudio.currentTime=0; gameplayAudio.play();
+}
+
+// ---------------- Resize ----------------
+window.addEventListener('resize',()=>{ camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth,window.innerHeight); });
+
+// ---------------- Animate ----------------
+let clock = new THREE.Clock();
+let tick=0;
+function animate(){
+    requestAnimationFrame(animate);
+    let dt=clock.getDelta();
+    tick+=dt*60;
+    if(mixer) mixer.update(dt);
+
+    // Lobby dancing
+    if(!running && orangutan){
+        orangutan.rotation.y = Math.sin(tick*0.08)*Math.PI;
+        orangutan.rotation.x = Math.sin(tick*0.05)*0.3;
+        orangutan.position.y = Math.abs(Math.sin(tick*0.1))*0.6;
+        orangutan.position.x = Math.sin(tick*0.04)*1.5;
+        orangutan.rotation.z = Math.sin(tick*0.06)*0.4;
+    }
+
+    if(running){
+        // Player gravity
+        player.v+=0.01; if(player.glide) player.v*=0.95;
+        player.y-=player.v; if(player.y<-0.8) player.y=-0.8; if(player.y>4) player.y=4;
+        if(orangutan) orangutan.position.y=player.y;
+
+        // Spawn obstacles
+        if(Math.random()<0.01) spawnObstacle();
+
+        // Move obstacles & bananas
+        obstacles.forEach(o=>{ o.position.x-=0.05; if(o.position.x<-10) scene.remove(o); });
+        obstacles=obstacles.filter(o=>o.position.x>=-10);
+        bananas.forEach(b=>{ b.position.x-=0.05; if(b.position.x<-10) scene.remove(b); });
+        bananas=bananas.filter(b=>b.position.x>=-10);
+
+        // Collisions
+        obstacles.forEach(o=>{ if(Math.abs(o.position.x)<=0.5 && Math.abs(o.position.y-player.y)<0.5){ handleDeath(); } });
+        bananas.forEach((b,i)=>{ if(Math.abs(b.position.x)<=0.5 && Math.abs(b.position.y-player.y)<0.5){
+            score+=10; scene.remove(b); bananas.splice(i,1); bananaAudio.currentTime=0; bananaAudio.play();
+        }});
+
+        // Update score
+        score+=0.01;
+        document.getElementById('score').textContent='Score: '+Math.floor(score);
+
+        // Camera follow
+        camera.position.y = 5 + player.y/2;
+        camera.lookAt(0,player.y,0);
+    }
+
+    renderer.render(scene,camera);
+}
+animate();
+
+// Start lobby music on first tap
+document.addEventListener('click', function startLobbyMusicOnce(){
+    lobbyAudio.play();
+    document.removeEventListener('click', startLobbyMusicOnce);
+});
+</script>
+</body>
+</html>
